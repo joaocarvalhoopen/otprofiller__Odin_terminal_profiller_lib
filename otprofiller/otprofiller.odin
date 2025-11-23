@@ -278,163 +278,6 @@ Location_Key :: struct {
     tag       : string,
 }
 
-/*
-
-generate_reports :: proc ( ) {
-
-    if !global_registry.is_enabled {
-       
-       return
-    }
-    
-    fmt.println( "Generating reports..." )
-    
-    sync.mutex_lock( & global_registry.mutex )
-    defer sync.mutex_unlock( & global_registry.mutex )
-
-    // 1. String Cache: Map Location Data -> Formatted String
-    // This ensures we only allocate the formatted string ONCE per unique trace location.
-    name_cache := make( map[ Location_Key ]string )
-    defer delete( name_cache )
-    
-    // Function to resolve name from cache or build it
-    resolve_name :: proc ( cache : ^map[ Location_Key ]string,
-                           tag   : string,
-                           loc   : runtime.Source_Code_Location ) ->
-                           string {
-                               
-        key := Location_Key{ loc.file_path, loc.procedure, tag }
-        
-        if key in cache {
-            
-            return cache[ key ]
-        }
-        
-        // Build the string : "Tag @ File @ line @ Proc"
-        file_name := filepath.base( loc.file_path )
-        full_str := fmt.aprintf( "%s @ %s @ %d @ %s()",
-                                 tag, file_name, loc.line, loc.procedure )
-        cache[ key ] = full_str
-        return full_str
-    }
-
-    stats_map := make( map[ string ]Func_Stat )
-    defer delete( stats_map )
-
-    thread_spans := make( map[ int ][ dynamic ]Span_Info )
-    defer {
-        
-        for _, v in thread_spans {
-            
-            delete( v )
-        }
-        delete( thread_spans )
-    }
-
-    global_start := global_registry.start_time
-    max_end_ns : i64 = 0
-
-    // Temporary stack item for analysis
-    Stack_Item :: struct { 
-    
-        start : time.Tick, 
-        tag   : string,
-        loc   : runtime.Source_Code_Location
-    }
-
-    for ctx in global_registry.contexts {
-        
-        stack := make( [ dynamic ]Stack_Item )
-        defer delete( stack ) 
-
-        spans := make( [ dynamic ]Span_Info )
-        thread_spans[ ctx.tid ] = spans
-
-        curr := ctx.head_page
-        for curr != nil {
-            
-            for i in 0 ..< curr.count {
-                
-                ev := curr.events[ i ]
-
-                if ev.kind == .Enter {
-                    
-                    append( & stack, Stack_Item{ ev.timestamp, ev.tag, ev.loc } )
-                } else {
-                    
-                    if len( stack ) > 0 {
-                        
-                        item := pop( & stack )
-                        
-                        // RESOLVE NAME ( Cold Path )
-                        full_name := resolve_name( &name_cache, item.tag, item.loc )
-                        
-                        diff_tick := time.tick_diff( item.start, ev.timestamp )
-                        dur_ns := time.duration_nanoseconds( diff_tick )
-                        
-                        stat, ok := stats_map[ full_name ]
-                        if !ok {
-                            
-                            stat.full_name = full_name
-                            stat.min_time  = max( i64 )
-                        }
-                        
-                        stat.calls          += 1
-                        stat.total_duration += dur_ns
-                        
-                        if dur_ns < stat.min_time {
-                           
-                            stat.min_time = dur_ns
-                        }
-                        
-                        if dur_ns > stat.max_time {
-                            
-                            stat.max_time = dur_ns
-                        }
-                        
-                        stats_map[ full_name ] = stat
-
-                        start_ns := time.duration_nanoseconds( time.tick_diff( global_start, item.start ) )
-                        end_ns   := time.duration_nanoseconds( time.tick_diff( global_start, ev.timestamp ) )
-                        if end_ns > max_end_ns {
-                            
-                            max_end_ns = end_ns
-                        }
-
-                        depth := len( stack )
-                        append( & thread_spans[ ctx.tid ],
-                                Span_Info{
-                            
-                                    name     = full_name,
-                                    start_ns = start_ns,
-                                    end_ns   = end_ns,
-                                    depth    = depth,
-                        } )
-                    }
-                }
-            }
-            curr = curr.next
-        }
-    }
-
-    sorted_stats := make( [ dynamic ]Func_Stat, 0, len( stats_map ) )
-    for _, v in stats_map {
-       
-        append( & sorted_stats, v )
-    }
-    defer delete( sorted_stats )
-
-    slice.sort_by( sorted_stats[ : ], proc( a, b : Func_Stat ) -> bool {
-        
-        return a.total_duration > b.total_duration
-    } )
-
-    write_txt_report( sorted_stats[ : ] )
-    write_html_visualizer( thread_spans, max_end_ns, sorted_stats[ : ] )
-}
-
-*/
-
 generate_reports :: proc ( ) {
 
     if !global_registry.is_enabled {
@@ -486,7 +329,7 @@ generate_reports :: proc ( ) {
     global_start := global_registry.start_time
     max_end_ns : i64 = 0
 
-    // --- CHANGED: Added children_dur to track inner calls ---
+    // Added children_dur to track inner calls
     Stack_Item :: struct { 
     
         start        : time.Tick, 
@@ -526,20 +369,17 @@ generate_reports :: proc ( ) {
                         diff_tick := time.tick_diff( item.start, ev.timestamp )
                         total_ns  := time.duration_nanoseconds( diff_tick )
                         
-                        // --- CALCULATION LOGIC FIX ---
-                        
                         // Self Time = Total Time - Time spent in Children
                         self_ns   := total_ns - item.children_dur
                         
-                        // If there is a parent on the stack, add OUR total time to THEIR children accumulator
+                        // If there is a parent on the stack, add OUR total time 
+                        // to THEIR children accumulator
                         if len( stack ) > 0 {
                              
                              // Get pointer to parent (top of stack)
                              parent_idx := len( stack ) - 1
                              stack[ parent_idx ].children_dur += total_ns
                         }
-                        
-                        // -----------------------------
                         
                         stat, ok := stats_map[ full_name ]
                         if !ok {
@@ -602,106 +442,6 @@ generate_reports :: proc ( ) {
     write_txt_report( sorted_stats[ : ] )
     write_html_visualizer( thread_spans, max_end_ns, sorted_stats[ : ] )
 }
-
-
-/*
-write_txt_report :: proc ( stats : [ ]Func_Stat ) {
-    
-    sb : strings.Builder
-    strings.builder_init( & sb )
-    defer strings.builder_destroy( & sb )
-
-    hostname := get_hostname_safe( )
-    now_str  := get_timestamp_safe( )
-    exe_name := os.args[ 0 ]
-    
-    
-    fmt.sbprintln( & sb, "================================================================================================================================================" )
-    fmt.sbprintln( & sb, "                                    PROFILLER REPORT                                                                                            " )
-    fmt.sbprintln( & sb, "================================================================================================================================================" )
-    fmt.sbprintfln( & sb,  " Program:  %s", exe_name )
-    fmt.sbprintfln( & sb,  " Time:     %s", now_str )
-    fmt.sbprintfln( & sb,  " Machine:  %s", hostname )
-    fmt.sbprintln( & sb, "================================================================================================================================================" )
-    fmt.sbprintln( & sb, "" )
-
-    // Increased width for Function column
-    fmt.sbprintf( & sb,  "| %4s | %-70s | %-12s | %-13s | %-13s | %-13s |\n", "#", "Function Context", "Calls", "Total(ms)", "Avg(us)", "Max(us)" )
-    fmt.sbprintln( & sb, "|------|------------------------------------------------------------------------|--------------|---------------|---------------|---------------|" )
-
-    replace_left_zeros :: proc ( float_str : string ) ->
-                                 string {
-        
-        counter := 0
-        for elem, i in float_str {
-            
-            if elem == '0' && i < len( float_str ) - 1 && float_str[ i + 1 ] != '.' {
-                
-                counter += 1
-            } else {
-                
-                break
-            }
-        }
-        
-        ret_str, _  := strings.replace( float_str, "0", "_", counter )
-        return ret_str
-    }
-    
-    
-    for s, i in stats {
-        
-        total_ms := f64( s.total_duration ) / 1_000_000.0
-        avg_us   := ( f64( s.total_duration ) / f64( s.calls ) ) / 1000.0
-        max_us   := f64( s.max_time ) / 1000.0
-        
-        // Truncate name if too long for cleaner TXT output
-        display_name := s.full_name
-        // if len( display_name ) > 50 {
-        // 
-        //     display_name = display_name[ : 47 ]
-        // }
-
-        if len( display_name ) > 70 {
-            
-             display_name = display_name[ : 67 ]
-        }
-
-        // fmt.sbprintf( & sb, "| %4d | %-70s | %12d | %12.3f | %10.3f | %10.3f |\n", 
-        //               i + 1, display_name, s.calls, total_ms, avg_us, max_us )
-
-        
-        width := 4        
-        func_index_str := fmt.tprintf( "%4d", i + 1 )
-        func_index_str = replace_left_zeros( func_index_str )
-        
-        width = 12        
-        s_calls_str := fmt.tprintf( "%12d", s.calls )
-        s_calls_str = replace_left_zeros( s_calls_str )
-        
-        width = 13        
-        total_ms_str := fmt.tprintf( "%13.3f", total_ms )
-        total_ms_str = replace_left_zeros( total_ms_str )
-        
-        width = 13        
-        avg_us_str := fmt.tprintf( "%13.3f", avg_us )
-        avg_us_str = replace_left_zeros( avg_us_str )
-        
-        width = 13        
-        max_us_str := fmt.tprintf( "%13.3f", max_us)
-        max_us_str = replace_left_zeros( max_us_str )
-        
-        fmt.sbprintf( & sb, "| %s | %-70s | %s | %s | %s | %s |\n", 
-                      func_index_str, display_name, s_calls_str, total_ms_str, avg_us_str, max_us_str )
-        
-    }
-    fmt.sbprintln( & sb, "================================================================================================================================================" )
-
-    os.write_entire_file( "profille_report.txt", transmute( [ ]u8 )strings.to_string( sb ) )
-}
-
-*/
-
 
 write_txt_report :: proc ( stats : [ ]Func_Stat ) {
     
@@ -1081,8 +821,6 @@ heavy_math :: proc ( val : f64 ) ->
     
     return x
 }
-
-
 
 worker_proc :: proc ( t : ^thread.Thread ) {
 
