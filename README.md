@@ -7,7 +7,7 @@ Small lib to make a very simple instrumentation profiller in Odin.
 - It generates 2 reports: 
   1. profiller_report.txt
   2. profiller_report.html  ( this one has also a kind of flame graph in it )
-- Note: At the end of the file there is a small test exampple of its usage.
+- Note: At the end of the file there is a small test example of its usage.
 
 ## Images of the reports
 
@@ -15,7 +15,7 @@ Small lib to make a very simple instrumentation profiller in Odin.
 
 ![./images/txt_profiller_report.png](./images/txt_profiller_report.png)
 
-### HTML repost
+### HTML report
 
 ![./images/html_profiller_report.png](./images/html_profiller_report.png)
 
